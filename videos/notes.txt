@@ -1,0 +1,10 @@
+We used this online tool to convert youtube videos into mp4 format, while cutting the videos to be between certain clip ranges: 
+https://www.clipconverter.cc/2/
+
+The following videos were downloaded and analyzed: 
+
+https://www.youtube.com/watch?v=emyD_eGuVYk
+(Particularly the part from 1:45 - 2:15) 
+
+https://www.youtube.com/watch?v=hHCCih9cHxw
+(Particularly the part from 6:03 - 6:13)
