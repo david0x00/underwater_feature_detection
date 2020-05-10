@@ -17,6 +17,7 @@ def get_frame_number(video_filename, frame_num):
         print('unable to load video `' + video_filename + '`')
         sys.exit(1)
     while success:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB ) 
         frames.append(image)
         success,image = vidcap.read()
 
@@ -85,11 +86,14 @@ def plot_inlier_matches(ax, img1, img2, inliers):
     ax.plot([inliers[:,0], inliers[:,2] + img1.shape[1]],
             [inliers[:,1], inliers[:,3]], 'r', linewidth=0.4)
     ax.axis('off')
+    plt.show()
+    
 
 def print_layer(printed, name, x):
       if not printed: 
-        print(name)
-        print(x.shape)
+        # print(name)
+        # print(x.shape)
+        pass
 class SegmentationNet(nn.Module):
     def __init__(self): # feel free to modify input paramters
         super(SegmentationNet, self).__init__()
@@ -164,44 +168,50 @@ class SegmentationNet(nn.Module):
         return x
 
 from scipy import ndimage
-def remove_specularities_show(img):
+def remove_specularities(img, frame_num):
     net = SegmentationNet()
     net.load_state_dict(torch.load('SpecularityModelStateDict', map_location=torch.device('cpu')))
     net.eval()
-
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB ) 
-    print(img.shape)
-    plt.imshow(img)
-    plt.show()
     
-    temp = np.array([img/255], dtype=np.float32)
-
-    print(np.min(img))
+    temp = np.array([img/255], dtype=np.float32) 
     tensor = torch.from_numpy(temp).permute(0, 3, 1, 2) # default is torch.Size([224, 288, 3])
-    print(tensor.shape) # Need to get torch.Size([1, 3, 224, 288])
-    plt.imshow(tensor[0].permute(1, 2, 0))
-    plt.show()
 
     mask = net(tensor)
     mask = mask.detach().cpu().numpy()[0][1]
-    # img = np.array(img[0].permute((1,2,0)))
     threshold = 0.5
     mask = (mask > threshold) * 1
 
+    fig = plt.figure()
     plt.imshow(mask, cmap='gray')
-    plt.show()
+    # plt.show()
+    plt.savefig("bluring/mask" + str(frame_num) + ".png")
+    
+    fig = plt.figure()
+    plt.imshow(img)
+    # plt.show()
+    plt.savefig("bluring/unfiltered" + str(frame_num) + ".png")
 
-    blurred_img = cv2.GaussianBlur(img, (7, 7), 0)
-    blurred_img = cv2.medianBlur(img, 5)
-    blurred_img = ndimage.minimum_filter(img, size=(7, 7, 1))
+    # blurred_img = cv2.GaussianBlur(img, (21, 21), 0)
+    # blurred_img = cv2.medianBlur(img, 5)
+    blurred_img = ndimage.minimum_filter(img, size=(5, 5, 1))
+    blurred_img = cv2.medianBlur(blurred_img, 5)
     out = np.array([[blurred_img[i][j] if mask[i][j] else img[i][j] for j in range(len(img[i]))] for i in range(len(img))])
 
     plt.imshow(out)
-    plt.show()
+    # plt.show()
+    plt.savefig("bluring/filtered-min" + str(frame_num) + ".png")
+    return out
 
-# start_frame = 0
-# frame_difference = 30
-# threshold = 1000
+fig, ax = None, None
+def plot_matches(img1, img2, comparison):
+    xyxypairs = get_best_matches(img1, img2, 1, threshold)
+    fig, ax = plt.subplots(figsize=(20,10))
+    plot_inlier_matches(ax, img1, img2, xyxypairs)
+    fig.savefig('bluring/' + comparison + '.jpg', bbox_inches='tight')
+    plt.show()
+start_frame = 0
+frame_difference = 120
+threshold = 2000
 # video_file_name = "pool_constant_camera.mp4"
 
 # frame_number = 0
@@ -210,44 +220,39 @@ def remove_specularities_show(img):
 # video_file_name = "Coral.mp4"
 
 # start_frame = 0
-# frame_difference = 20
-# threshold = 10000
+# frame_difference = 120
+# threshold = 50000
 # video_file_name = "Cycling.mp4"
 
-start_frame = 30
-frame_difference = 1
-threshold = 10000
-video_file_name = "Carla.mp4"
+# start_frame = 30
+# frame_difference = 10
+# threshold = 10000
+# video_file_name = "Carla.mp4"
 
 
 video_base = "videos/"
 
 if len(sys.argv) != 3:
     print('Provide video name and frame number. ')
+    exit(1)
 video_file_name = sys.argv[1]
 frame_num = int(sys.argv[2])
 
 frame1 = get_frame_number(video_base+video_file_name, frame_num)
-resized = cv2.resize(frame1, (288, 224), interpolation=cv2.INTER_LINEAR)
-# imsave(resized, 'output/' + video_file_name[:-4] + f"_{frame_num}" + '.jpg')
+frame1 = cv2.resize(frame1, (288, 224), interpolation=cv2.INTER_LINEAR)
 
-remove_specularities_show(resized)
+frame2 = get_frame_number(video_base+video_file_name, start_frame + frame_difference)
+frame2 = cv2.resize(frame2, (288, 224), interpolation=cv2.INTER_LINEAR)
 
-# frame2 = get_frame_number(video_base+video_file_name, start_frame + frame_difference)
-# imsave(frame2, video_file_name[:-3] + '.jpg')
-
-# aggregation_count = 10
+aggregation_count = 10
 # max1, mean1 = create_save_max_mean_images(video_base+video_file_name, start_frame, aggregation_count)
 # max2, mean2 = create_save_max_mean_images(video_base+video_file_name, start_frame + frame_difference, aggregation_count)
 
-# fig, ax = None, None
-# def plot_matches(img1, img2, comparison):
-#     xyxypairs = get_best_matches(img1, img2, 1, threshold)
-#     fig, ax = plt.subplots(figsize=(20,10))
-#     plot_inlier_matches(ax, img1, img2, xyxypairs)
-#     fig.savefig('output/' + comparison + '.jpg', bbox_inches='tight')
+plot_matches(frame1, frame2, video_file_name[:-3] + 'regular')
+frame1 = remove_specularities(frame1, 1)
+frame2 = remove_specularities(frame2, 2)
+plot_matches(frame1, frame2, video_file_name[:-3] + 'minBlur')
 
-# plot_matches(frame1, frame2, video_file_name[:-3] + 'regular')
 # plot_matches(max1, max2, video_file_name[:-3] + 'max')
 # plot_matches(mean1, mean2, video_file_name[:-3] + 'mean')
 
