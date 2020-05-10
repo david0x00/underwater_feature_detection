@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 from ipywidgets import interact, interactive, fixed, interact_manual
 from collections import defaultdict
 import sys
+import torch
+from torch import nn
 
 videos = defaultdict(list)
 def get_frame_number(video_filename, frame_num):
@@ -84,68 +86,169 @@ def plot_inlier_matches(ax, img1, img2, inliers):
             [inliers[:,1], inliers[:,3]], 'r', linewidth=0.4)
     ax.axis('off')
 
-start_frame = 0
-frame_difference = 30
-video_file = "pool_constant_camera.mp4"
-# video_file = "UnderPool.mp4"
+def print_layer(printed, name, x):
+      if not printed: 
+        print(name)
+        print(x.shape)
+class SegmentationNet(nn.Module):
+    def __init__(self): # feel free to modify input paramters
+        super(SegmentationNet, self).__init__()
+        self.printed = False
+        self.TOTAL_CLASSES = 9
 
-frame_number = 0
-frame_difference = 30
-threshold = 1000
-video_file = "Coral.mp4"
+        self.conv1 = nn.Conv2d(3, 64, 3,padding=1)
+        self.batchnorm1 = nn.BatchNorm2d(num_features=64)
+        self.relu = nn.ReLU(inplace=True)
+        
 
-start_frame = 0
-frame_difference = 20
+        self.conv2 = nn.Conv2d(64, 128, 3, padding=1)
+        self.conv3 = nn.Conv2d(128, 128, 3, padding=1)
+        self.batchnorm2 = nn.BatchNorm2d(num_features=128)
+        self.pool1 = nn.MaxPool2d(2,2,return_indices=True)
+
+        self.conv4 = nn.Conv2d(128, 256, 3, padding=1)
+        self.conv5 = nn.Conv2d(256, 256, 3, padding=1)
+        self.batchnorm3 = nn.BatchNorm2d(num_features=256)
+        self.pool2 = nn.MaxPool2d(2,2,return_indices=True)
+
+        self.conv6 = nn.Conv2d(256, 512, 3, padding=1)
+        self.conv7 = nn.Conv2d(512, 512, 3, padding=1)
+        self.batchnorm4 = nn.BatchNorm2d(num_features=512)
+        self.pool3 = nn.MaxPool2d(2,2,return_indices=True)
+
+        self.deconv1 = nn.ConvTranspose2d(512,512,3,padding=1)
+        self.deconv2 = nn.ConvTranspose2d(512,256,3,padding=1)
+        self.bn1 = nn.BatchNorm2d(256)
+        self.unpool1 = nn.MaxUnpool2d(2,2)
+
+        self.deconv3 = nn.ConvTranspose2d(256,256,3,padding=1)
+        self.deconv4 = nn.ConvTranspose2d(256,128,3,padding=1)
+        self.bn2 = nn.BatchNorm2d(128)
+        self.unpool2 = nn.MaxUnpool2d(2,2)
+
+        self.deconv5 = nn.ConvTranspose2d(128,64,3,padding=1)
+        self.deconv6 = nn.ConvTranspose2d(64,64,3,padding=1)
+        self.bn3 = nn.BatchNorm2d(64)
+        self.unpool3 = nn.MaxUnpool2d(2,2)
+
+
+        self.deconv7 = nn.ConvTranspose2d(64,2,3,padding=1)
+        self.bn4 = nn.BatchNorm2d(2)
+
+
+    def forward(self, x): # feel free to modify input paramters
+        printed = self.printed
+
+        x = self.batchnorm1(self.relu(self.conv1(x)))
+        print_layer(printed, 'conv1', x)
+        # x = self.relu(self.batchnorm2(self.conv2(x)))
+        x, i1 = self.pool1(self.batchnorm2(self.relu(self.conv3(self.relu(self.conv2(x))))))
+        print_layer(printed, 'pool1', x)
+        x, i2 = self.pool2(self.batchnorm3(self.relu(self.conv5(self.relu(self.conv4(x))))))
+        print_layer(printed, 'pool2', x)
+        x, i3 = self.pool3(self.batchnorm4(self.relu(self.conv7(self.relu(self.conv6(x))))))
+        print_layer(printed, 'pool3', x)
+
+        x = self.bn1(self.relu(self.deconv2(self.relu(self.deconv1(self.unpool1(x, i3))))))
+        print_layer(printed, 'unpool1', x)
+
+        x = self.bn2(self.relu(self.deconv4(self.relu(self.deconv3(self.unpool2(x, i2))))))
+        print_layer(printed, 'unpool2', x)
+
+        x = self.bn3(self.relu(self.deconv6(self.relu(self.deconv5(self.unpool3(x, i1))))))
+        print_layer(printed, 'unpool3', x)
+
+        x = self.bn4(self.relu(self.deconv7(x)))
+
+        self.printed = True
+        return x
+
+from scipy import ndimage
+def remove_specularities_show(img):
+    net = SegmentationNet()
+    net.load_state_dict(torch.load('SpecularityModelStateDict', map_location=torch.device('cpu')))
+    net.eval()
+
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB ) 
+    print(img.shape)
+    plt.imshow(img)
+    plt.show()
+    
+    temp = np.array([img/255], dtype=np.float32)
+
+    print(np.min(img))
+    tensor = torch.from_numpy(temp).permute(0, 3, 1, 2) # default is torch.Size([224, 288, 3])
+    print(tensor.shape) # Need to get torch.Size([1, 3, 224, 288])
+    plt.imshow(tensor[0].permute(1, 2, 0))
+    plt.show()
+
+    mask = net(tensor)
+    mask = mask.detach().cpu().numpy()[0][1]
+    # img = np.array(img[0].permute((1,2,0)))
+    threshold = 0.5
+    mask = (mask > threshold) * 1
+
+    plt.imshow(mask, cmap='gray')
+    plt.show()
+
+    blurred_img = cv2.GaussianBlur(img, (7, 7), 0)
+    blurred_img = cv2.medianBlur(img, 5)
+    blurred_img = ndimage.minimum_filter(img, size=(7, 7, 1))
+    out = np.array([[blurred_img[i][j] if mask[i][j] else img[i][j] for j in range(len(img[i]))] for i in range(len(img))])
+
+    plt.imshow(out)
+    plt.show()
+
+# start_frame = 0
+# frame_difference = 30
+# threshold = 1000
+# video_file_name = "pool_constant_camera.mp4"
+
+# frame_number = 0
+# frame_difference = 30
+# threshold = 1000
+# video_file_name = "Coral.mp4"
+
+# start_frame = 0
+# frame_difference = 20
+# threshold = 10000
+# video_file_name = "Cycling.mp4"
+
+start_frame = 30
+frame_difference = 1
 threshold = 10000
-video_file = "Cycling.mp4"
+video_file_name = "Carla.mp4"
 
 
 video_base = "videos/"
-frame1 = get_frame_number(video_base+video_file, start_frame)
-frame2 = get_frame_number(video_base+video_file, start_frame + frame_difference)
-# imsave(frame1, video_file[:-3] + '.jpg')
-# imsave(frame2, video_file[:-3] + '.jpg')
 
-aggregation_count = 10
-max1, mean1 = create_save_max_mean_images(video_base+video_file, start_frame, aggregation_count)
-max2, mean2 = create_save_max_mean_images(video_base+video_file, start_frame + frame_difference, aggregation_count)
+if len(sys.argv) != 3:
+    print('Provide video name and frame number. ')
+video_file_name = sys.argv[1]
+frame_num = int(sys.argv[2])
 
-fig, ax = None, None
-def plot_matches(img1, img2, comparison):
-    xyxypairs = get_best_matches(img1, img2, 1, threshold)
-    fig, ax = plt.subplots(figsize=(20,10))
-    plot_inlier_matches(ax, img1, img2, xyxypairs)
-    fig.savefig('output/' + comparison + '.jpg', bbox_inches='tight')
+frame1 = get_frame_number(video_base+video_file_name, frame_num)
+resized = cv2.resize(frame1, (288, 224), interpolation=cv2.INTER_LINEAR)
+# imsave(resized, 'output/' + video_file_name[:-4] + f"_{frame_num}" + '.jpg')
 
-plot_matches(frame1, frame2, video_file[:-3] + 'regular')
-plot_matches(max1, max2, video_file[:-3] + 'max')
-plot_matches(mean1, mean2, video_file[:-3] + 'mean')
+remove_specularities_show(resized)
+
+# frame2 = get_frame_number(video_base+video_file_name, start_frame + frame_difference)
+# imsave(frame2, video_file_name[:-3] + '.jpg')
+
+# aggregation_count = 10
+# max1, mean1 = create_save_max_mean_images(video_base+video_file_name, start_frame, aggregation_count)
+# max2, mean2 = create_save_max_mean_images(video_base+video_file_name, start_frame + frame_difference, aggregation_count)
+
+# fig, ax = None, None
+# def plot_matches(img1, img2, comparison):
+#     xyxypairs = get_best_matches(img1, img2, 1, threshold)
+#     fig, ax = plt.subplots(figsize=(20,10))
+#     plot_inlier_matches(ax, img1, img2, xyxypairs)
+#     fig.savefig('output/' + comparison + '.jpg', bbox_inches='tight')
+
+# plot_matches(frame1, frame2, video_file_name[:-3] + 'regular')
+# plot_matches(max1, max2, video_file_name[:-3] + 'max')
+# plot_matches(mean1, mean2, video_file_name[:-3] + 'mean')
 
 
-
-
-# def save_frame(img, name):
-#     gray= cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
-
-#     sift = cv2.xfeatures2d.SIFT_create()
-#     kp = sift.detect(gray,None)
-
-#     output=cv2.drawKeypoints(gray,kp, None)
-
-#     filename = 'extracted_frame' + name +'.jpg'
-#     cv2.imwrite(filename, img)
-#     print('wrote ' + filename)
-
-# gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
-# gray = np.float32(gray)
-# dst = cv2.cornerHarris(gray,2,3,0.04)
-
-# #result is dilated for marking the corners, not important
-# dst = cv2.dilate(dst,None)
-#
-# # Threshold for an optimal value, it may vary depending on the image.
-# img[dst>0.01*dst.max()]=[0,0,255]
-#
-# cv2.imshow('dst',img)
-# if cv2.waitKey(0) & 0xff == 27:
-#     cv2.destroyAllWindows()
